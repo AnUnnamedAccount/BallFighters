@@ -290,7 +290,7 @@ canvas{
 </head>
 
 <body>
-<div id="verTag">Ball Fighters v2.1 · Battle Chat Update</div>
+<div id="verTag">Ball Fighters v2.2 · New Balls Update</div>
 
 <h1>⚔️ BALL FIGHTERS ⚔️</h1>
 
@@ -774,7 +774,10 @@ const TYPES=[
     ["astrologist","Astrologist Ball"],
     ["slime","Slime Ball"],
     ["eyeball","Eyeball"],
-    ["cult","Cult Ball"]
+    ["cult","Cult Ball"],
+    ["marble","Marble Ball"],
+    ["chess","Chess Ball"],
+    ["shockwave","Shockwave Ball"]
 ];
 
 const BOSSES=[
@@ -1055,7 +1058,9 @@ SECRET_MAPS.push(
 );
 SECRET_BALLS.push(
     {id:"warrior",name:"Warrior Ball",ach:"Signs of Space",icon:"🛡️",how:SPACE_HOW,hint:"The stars spell something out, but only if you press the right ones..."},
-    {id:"pluto",name:"Pluto Ball",ach:"Not a planet",icon:"🪐",how:SPACE_HOW,hint:"One of the sky's answers is a joke."}
+    {id:"pluto",name:"Pluto Ball",ach:"Not a planet",icon:"🪐",how:SPACE_HOW,hint:"One of the sky's answers is a joke."},
+    {id:"mirror",name:"Mirror Ball",ach:"Seeing Double",icon:"🪞",how:"Win a fight where both sides use the same ball.",hint:"Two of a kind might see something in each other..."},
+    {id:"hourglass",name:"Hourglass Ball",ach:"Time Well Spent",icon:"⌛",how:"Win a fight that lasts at least 60 seconds.",hint:"Some victories take their time..."}
 );
 
 const ALL_SECRETS=SECRET_BALLS.concat(SECRET_MAPS).concat(SECRET_ACH);
@@ -1063,6 +1068,7 @@ const ALL_SECRETS=SECRET_BALLS.concat(SECRET_MAPS).concat(SECRET_ACH);
 let currentMap="default";
 let stoneHands=[];
 let djNotes=[];
+let nbMarbles=[],nbWaves=[],nbT=0;
 let invaders=[];
 let arcBumpers=[];
 let neoHench=[];
@@ -3968,6 +3974,7 @@ function startGame(){
     stoneHands=[];
     handTimer=4;
     djNotes=[];
+    nbMarbles=[];nbWaves=[];nbT=0;
     invaders=[];
     rockets=[];
     blasts=[];
@@ -4268,6 +4275,10 @@ function damageBall(ball,amount,label,silent){
     if(cultCur && cultCur.on && ball.type==="cult")
         return;
     if(ball.lagging)
+        return;
+    if(ball.invuln>0)
+        return;
+    if(ball.mirrorUp>0 && mirrorReflect(ball,amount,label))
         return;
     if(tarotShield(ball,amount,label))
         return;
@@ -4789,6 +4800,9 @@ function handleWallHit(ball,wall){
 
     if(ball.type==="planter")
         plantC4(ball,wall);
+
+    if(ball.flingMark)
+        shockWallHit(ball);
 
     /* launched by a pinball bumper: slamming into the wall hurts */
     if(ball.slamT>0 && ball.hp>0){
@@ -28134,7 +28148,386 @@ SKINS.push(
     {id:"ivanson",name:"Ivan's Son",types:["eyeball"],req:"cult3"}
 );
 
+/* =========================================================
+   MARBLE / CHESS / SHOCKWAVE  +  secrets: MIRROR / HOURGLASS
+========================================================= */
+const MARBLE_CD=4, MARBLE_DMG=4, MARBLE_SPEED=62, MARBLE_LIFE=9;
+const CHESS_CD=4, CHESS_DMG=6, CHESS_SQ=34;
+const SHOCK_CD=5, SHOCK_DMG=10, SHOCK_P=.6, SHOCK_WALL=2;
+const MIRROR_CD=7, MIRROR_UP=2.5, HOUR_CD=7;
+const MARBLE_COLS=[["#ff5a5a","#ffd0d0"],["#4da6ff","#d0e8ff"],["#5aff9a","#d0ffe4"],["#ffd24a","#fff0b0"],["#c06bff","#ecd0ff"]];
+
+function updateMarbleBall(ball,dt){
+    const f=ball.mbf||(ball.mbf={cd:1.5});
+    f.cd-=dt;
+    const foe=getNearestEnemy(ball);
+    if(f.cd>0||!foe)return;
+    f.cd=MARBLE_CD;
+    const base=Math.atan2(foe.y-ball.y,foe.x-ball.x);
+    const R=getRadius(ball);
+    for(let i=-1;i<=1;i++){
+        const a=base+i*.34+(Math.random()-.5)*.08;
+        const c=MARBLE_COLS[Math.floor(Math.random()*MARBLE_COLS.length)];
+        nbMarbles.push({x:ball.x+Math.cos(a)*(R+2),y:ball.y+Math.sin(a)*(R+2),vx:Math.cos(a)*MARBLE_SPEED,vy:Math.sin(a)*MARBLE_SPEED,
+            owner:ball,life:MARBLE_LIFE,c1:c[0],c2:c[1],rot:Math.random()*6,r:5});
+    }
+    f.flash=.2;
+    sfx("pop",.5);
+}
+function updateMarbles(dt){
+    for(let i=nbMarbles.length-1;i>=0;i--){
+        const m=nbMarbles[i],o=m.owner;
+        m.life-=dt;
+        if(m.life<=0||!o||o.hp<=0){nbMarbles.splice(i,1);continue;}
+        const sp=Math.hypot(m.vx,m.vy);
+        const k=Math.max(34,sp*(1-.06*dt))/(sp||1);
+        m.vx*=k;m.vy*=k;
+        m.x+=m.vx*dt;m.y+=m.vy*dt;
+        m.rot+=Math.hypot(m.vx,m.vy)*dt/m.r;
+        let bounced=false;
+        if(currentMap==="alt"){
+            const cx=W/2,cy=H/2,R=Math.min(W,H)/2,dx=m.x-cx,dy=m.y-cy,d=Math.hypot(dx,dy)||1;
+            if(d+m.r>=R){
+                const nx=dx/d,ny=dy/d,dot=m.vx*nx+m.vy*ny;
+                m.x=cx+nx*(R-m.r);m.y=cy+ny*(R-m.r);
+                if(dot>0){m.vx-=2*dot*nx;m.vy-=2*dot*ny;}
+                bounced=true;
+            }
+        }else{
+            if(m.x<m.r){m.x=m.r;m.vx=Math.abs(m.vx);bounced=true;}
+            else if(m.x>W-m.r){m.x=W-m.r;m.vx=-Math.abs(m.vx);bounced=true;}
+            if(m.y<m.r){m.y=m.r;m.vy=Math.abs(m.vy);bounced=true;}
+            else if(m.y>H-m.r){m.y=H-m.r;m.vy=-Math.abs(m.vy);bounced=true;}
+        }
+        if(bounced){sfx("tick",.35);}
+        let used=false;
+        for(const e of getEnemies(o)){
+            if(Math.hypot(e.x-m.x,e.y-m.y)<=getRadius(e)+m.r){
+                damageBall(e,MARBLE_DMG,"MARBLE");
+                addSparks(m.x,m.y,7,m.c1,80);
+                used=true;break;
+            }
+        }
+        if(used)nbMarbles.splice(i,1);
+    }
+}
+function drawMarbles(){
+    const t=performance.now()/1000;
+    for(const m of nbMarbles){
+        ctx.save();ctx.translate(m.x,m.y);
+        ctx.fillStyle="rgba(0,0,0,.25)";ctx.beginPath();ctx.ellipse(1.2,m.r*.85,m.r*.9,m.r*.4,0,0,TAU);ctx.fill();
+        const g=ctx.createRadialGradient(-m.r*.35,-m.r*.4,.5,0,0,m.r*1.1);
+        g.addColorStop(0,m.c2);g.addColorStop(1,m.c1);
+        ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,m.r,0,TAU);ctx.fill();
+        ctx.save();ctx.rotate(m.rot);
+        ctx.strokeStyle="rgba(255,255,255,.7)";ctx.lineWidth=1;
+        ctx.beginPath();ctx.arc(0,0,m.r*.55,.3,2.6);ctx.stroke();
+        ctx.beginPath();ctx.arc(0,0,m.r*.55,3.6,5.7);ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle="rgba(255,255,255,.85)";ctx.beginPath();ctx.arc(-m.r*.4,-m.r*.4,m.r*.22,0,TAU);ctx.fill();
+        ctx.strokeStyle="rgba(0,0,0,.4)";ctx.lineWidth=.8;ctx.beginPath();ctx.arc(0,0,m.r,0,TAU);ctx.stroke();
+        ctx.restore();
+    }
+}
+
+/* ---- Chess Ball ---- */
+function chessPlan(ball,foe){
+    const cx=W/2,cy=H/2,R=getRadius(ball),S=CHESS_SQ;
+    const inside=(x,y)=>x>=R&&x<=W-R&&y>=R&&y<=H-R;
+    const lineBest=(dx,dy)=>{
+        let L=0;
+        while(L<400&&inside(cx+dx*(L+1),cy+dy*(L+1)))L++;
+        const t=Math.max(0,Math.min(L,(foe.x-cx)*dx+(foe.y-cy)*dy));
+        const x=cx+dx*t,y=cy+dy*t;
+        return {pts:[[cx,cy],[x,y]],end:[x,y],d:Math.hypot(foe.x-x,foe.y-y)};
+    };
+    const opts={rook:[],bishop:[],knight:[]};
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]])opts.rook.push(lineBest(dx,dy));
+    const q=Math.SQRT1_2;
+    for(const [dx,dy] of [[q,q],[-q,q],[q,-q],[-q,-q]])opts.bishop.push(lineBest(dx,dy));
+    for(const [ax,ay,bx,by] of [[2,0,0,1],[2,0,0,-1],[-2,0,0,1],[-2,0,0,-1],[0,2,1,0],[0,2,-1,0],[0,-2,1,0],[0,-2,-1,0]]){
+        const mx=cx+ax*S,my=cy+ay*S,ex=mx+bx*S,ey=my+by*S;
+        if(!inside(ex,ey)||!inside(mx,my))continue;
+        opts.knight.push({pts:[[cx,cy],[mx,my],[ex,ey]],end:[ex,ey],d:Math.hypot(foe.x-ex,foe.y-ey)});
+    }
+    const best=k=>opts[k].length?opts[k].reduce((a,b)=>b.d<a.d?b:a):null;
+    const thr=getRadius(foe)+R+12;
+    const names=["rook","bishop","knight"];
+    let k=names[Math.floor(Math.random()*3)];
+    let pl=best(k);
+    if(!pl||pl.d>thr){
+        for(const n of names){const c=best(n);if(c&&(!pl||c.d<pl.d)){pl=c;k=n;}}
+    }
+    return {kind:k,pts:pl.pts,seg:0,prog:0,hit:false};
+}
+function updateChessBall(ball,dt){
+    const f=ball.chf||(ball.chf={cd:2.5,ph:0,t:0});
+    ball.invuln=Math.max(0,(ball.invuln||0)-dt);
+    if(f.ph===0){
+        f.cd-=dt;
+        const foe=getNearestEnemy(ball);
+        if(f.cd<=0&&foe){
+            f.ph=1;f.t=0;f.sx=ball.x;f.sy=ball.y;
+            ball.pinned=true;ball.invuln=9;
+            addFloatText(ball.x,ball.y-getRadius(ball)-12,"♞ ♝ ♜","#ffffff");
+        }
+        return;
+    }
+    const foe=getNearestEnemy(ball);
+    if(f.ph===1){
+        f.t+=dt;
+        const k=Math.min(1,f.t/.32),e=k*k*(3-2*k);
+        ball.x=f.sx+(W/2-f.sx)*e;ball.y=f.sy+(H/2-f.sy)*e;
+        ball.vx=ball.vy=0;
+        if(k>=1){
+            if(!foe){f.ph=3;f.t=0;return;}
+            f.mv=chessPlan(ball,foe);f.ph=2;
+            addFloatText(ball.x,ball.y-getRadius(ball)-12,f.mv.kind.toUpperCase(),"#ffe27a");
+            sfx("charge",.35);
+        }
+        return;
+    }
+    if(f.ph===2){
+        const mv=f.mv;
+        let step=420*dt;
+        while(step>0&&mv.seg<mv.pts.length-1){
+            const a=mv.pts[mv.seg],b=mv.pts[mv.seg+1];
+            const len=Math.hypot(b[0]-a[0],b[1]-a[1])||1;
+            const left=len-mv.prog;
+            const adv=Math.min(step,left);
+            mv.prog+=adv;step-=adv;
+            ball.x=a[0]+(b[0]-a[0])*(mv.prog/len);
+            ball.y=a[1]+(b[1]-a[1])*(mv.prog/len);
+            if(mv.prog>=len-.001){mv.seg++;mv.prog=0;}
+            if(!mv.hit)for(const e of getEnemies(ball)){
+                if(Math.hypot(e.x-ball.x,e.y-ball.y)<=getRadius(e)+getRadius(ball)+2){mv.hit=true;chessCapture(ball,e);break;}
+            }
+        }
+        if(mv.seg>=mv.pts.length-1){
+            if(!mv.hit&&foe&&Math.hypot(foe.x-ball.x,foe.y-ball.y)<=getRadius(foe)+getRadius(ball)+12){mv.hit=true;chessCapture(ball,foe);}
+            f.ph=3;f.t=0;
+        }
+        return;
+    }
+    if(f.ph===3){
+        f.t+=dt;
+        if(f.t>=.18){
+            f.ph=0;f.cd=CHESS_CD;ball.pinned=false;ball.invuln=.25;
+            const a=Math.random()*TAU,sp=BASE_SPEED;
+            ball.vx=Math.cos(a)*sp;ball.vy=Math.sin(a)*sp;
+        }
+    }
+}
+function chessCapture(ball,e){
+    damageBall(e,CHESS_DMG,"CHECK");
+    addSparks(e.x,e.y,10,"#ffffff",110);
+    addFloatText(e.x,e.y-getRadius(e)-12,"CHECK!","#ffe27a");
+    shakeTime=Math.max(shakeTime,.12);
+    sfx("clang",.5);
+}
+
+/* ---- Shockwave Ball ---- */
+function updateShockBall(ball,dt){
+    const f=ball.skf||(ball.skf={cd:2.5,pulse:0});
+    f.cd-=dt;f.pulse=Math.max(0,f.pulse-dt);
+    if(f.cd>0||!getNearestEnemy(ball))return;
+    f.cd=SHOCK_CD;f.pulse=.35;
+    nbWaves.push({x:ball.x,y:ball.y,r:getRadius(ball),owner:ball,done:new Set()});
+    addFloatText(ball.x,ball.y-getRadius(ball)-12,"SHOCKWAVE!","#ffb040");
+    shakeTime=Math.max(shakeTime,.1);
+    sfx("boom",.55);
+}
+function updateShockWaves(dt){
+    for(let i=nbWaves.length-1;i>=0;i--){
+        const w=nbWaves[i],o=w.owner;
+        w.r+=210*dt;
+        if(!o||o.hp<=0||w.r>Math.hypot(W,H)){nbWaves.splice(i,1);continue;}
+        for(const e of getEnemies(o)){
+            if(w.done.has(e))continue;
+            const d=Math.hypot(e.x-w.x,e.y-w.y);
+            if(w.r>=d-getRadius(e)){
+                w.done.add(e);
+                if(Math.random()<SHOCK_P){
+                    damageBall(e,SHOCK_DMG,"SHOCK");
+                    const dx=e.x-w.x,dy=e.y-w.y,dd=Math.hypot(dx,dy)||1;
+                    const a=Math.atan2(dy/dd+(Math.random()-.5)*.25,dx/dd);
+                    e.vx=Math.cos(a)*BASE_SPEED;e.vy=Math.sin(a)*BASE_SPEED;
+                    e.launchT=2.5;e.launchMul=3.2;e.flingMark=true;e.slamT=0;
+                    addSparks(e.x,e.y,14,"#ffb040",140);
+                    addFloatText(e.x,e.y-getRadius(e)-12,"FLUNG!","#ffb040");
+                    shakeTime=Math.max(shakeTime,.25);
+                    sfx("boom",.7);
+                }else{
+                    addFloatText(e.x,e.y-getRadius(e)-12,"MISSED","#9aa0a8");
+                    sfx("tick",.4);
+                }
+            }
+        }
+    }
+}
+/* a flung ball hurts and rattles the screen on every wall it hits */
+function shockWallHit(ball){
+    if(!ball.flingMark)return;
+    if(!(ball.launchT>0)){ball.flingMark=false;return;}
+    if(ball.hp<=0)return;
+    damageBall(ball,SHOCK_WALL,"SLAM");
+    addSparks(ball.x,ball.y,8,"#ffb040",110);
+    shakeTime=Math.max(shakeTime,.22);
+    sfx("boom",.6);
+}
+function drawShockWaves(){
+    for(const w of nbWaves){
+        const a=Math.max(0,1-w.r/Math.hypot(W,H)*1.1);
+        ctx.save();
+        ctx.strokeStyle="rgba(255,176,64,"+(.15+a*.8)+")";ctx.lineWidth=3+a*3;
+        ctx.beginPath();ctx.arc(w.x,w.y,w.r,0,TAU);ctx.stroke();
+        ctx.strokeStyle="rgba(255,240,200,"+(a*.7)+")";ctx.lineWidth=1.2;
+        ctx.beginPath();ctx.arc(w.x,w.y,w.r*.93,0,TAU);ctx.stroke();
+        ctx.restore();
+    }
+}
+
+/* ---- Mirror Ball (secret) ---- */
+function updateMirrorBall(ball,dt){
+    const f=ball.mrf||(ball.mrf={cd:3,up:0,hit:0});
+    f.hit-=dt;
+    if(f.up>0){f.up-=dt;if(f.up<=0){f.up=0;f.cd=MIRROR_CD;}}
+    else{
+        f.cd-=dt;
+        if(f.cd<=0&&getNearestEnemy(ball)){f.up=MIRROR_UP;addFloatText(ball.x,ball.y-getRadius(ball)-12,"MIRROR UP","#bfe8ff");sfx("clang",.4);}
+    }
+    ball.mirrorUp=f.up;
+    const foe=getNearestEnemy(ball);
+    if(foe&&f.hit<=0&&Math.hypot(foe.x-ball.x,foe.y-ball.y)<=getRadius(foe)+getRadius(ball)+3){
+        damageBall(foe,3,"BASH");addSparks(foe.x,foe.y,6,"#dfeeff",80);f.hit=1;
+    }
+}
+/* returns true when the hit was reflected instead of taken */
+function mirrorReflect(ball,amount,label){
+    if(!(ball.mirrorUp>0)||!(amount>0)||label==="REFLECT")return false;
+    const foe=getNearestEnemy(ball);
+    addFloatText(ball.x,ball.y-getRadius(ball)-14,"REFLECTED","#bfe8ff");
+    addSparks(ball.x,ball.y,8,"#bfe8ff",90);sfx("clang",.45);
+    if(foe)damageBall(foe,Math.min(amount,8),"REFLECT");
+    return true;
+}
+
+/* ---- Hourglass Ball (secret) ---- */
+function updateHourBall(ball,dt){
+    const f=ball.hgf||(ball.hgf={sand:0,hit:0,flip:0});
+    f.hit-=dt;f.flip=Math.max(0,f.flip-dt);
+    f.sand+=dt/HOUR_CD;
+    const foe=getNearestEnemy(ball);
+    if(f.sand>=1&&foe){
+        f.sand=0;f.flip=.6;
+        damageBall(foe,3,"SAND");
+        foe.slowT=Math.max(foe.slowT||0,3);
+        addSparks(foe.x,foe.y,10,"#f2d27a",90);
+        addFloatText(foe.x,foe.y-getRadius(foe)-12,"TIME SLOWS","#f2d27a");
+        sfx("zap",.4);
+    }else if(f.sand>1)f.sand=1;
+    if(foe&&f.hit<=0&&Math.hypot(foe.x-ball.x,foe.y-ball.y)<=getRadius(foe)+getRadius(ball)+3){
+        damageBall(foe,2,"BASH");f.hit=1;
+    }
+}
+
+function updateNewBalls(ball,dt){
+    switch(ball.type){
+    case "marble":updateMarbleBall(ball,dt);break;
+    case "chess":updateChessBall(ball,dt);break;
+    case "shockwave":updateShockBall(ball,dt);break;
+    case "mirror":updateMirrorBall(ball,dt);break;
+    case "hourglass":updateHourBall(ball,dt);break;
+    }
+}
+
+/* ---- designs (drawn in the 17-radius space) ---- */
+function drawNewBallDesign(c,ball,t){
+    const ty=ball.type;
+    if(ty==="marble"){
+        const f=ball.mbf||{cd:1,flash:0};
+        const g=c.createRadialGradient(-5,-6,1,0,0,16);
+        g.addColorStop(0,"#d8f0ff");g.addColorStop(.55,"#3a8ae0");g.addColorStop(1,"#14305a");
+        c.fillStyle=g;c.beginPath();c.arc(0,0,15.5,0,TAU);c.fill();
+        c.save();c.rotate(t*.8);
+        skL(c,"#ffd24a",2.2,[[-9,-3],[-3,-9],[4,-8]]);
+        skL(c,"#ff5a7a",2.2,[[9,4],[3,10],[-4,9]]);
+        c.restore();
+        skD(c,"rgba(255,255,255,.8)",-6,-7,2.6);
+        for(const sg of[-1,1]){skD(c,"#fff",sg*4,0,2.6);skD(c,"#111",sg*4+.4,.3,1.3);}
+        skL(c,"#14305a",1.2,[[-3,6],[0,7.6],[3,6]]);
+        return;
+    }
+    if(ty==="chess"){
+        const inv=ball.invuln>0;
+        c.save();c.beginPath();c.arc(0,0,15.5,0,TAU);c.clip();
+        for(let i=-4;i<4;i++)for(let j=-4;j<4;j++){c.fillStyle=(i+j)&1?"#2a2a30":"#f1ead6";c.fillRect(i*8,j*8,8,8);}
+        c.restore();
+        c.strokeStyle="#111";c.lineWidth=1;c.beginPath();c.arc(0,0,15.5,0,TAU);c.stroke();
+        /* rook crown */
+        skP(c,"#ffd24a",[[-8,-9],[-8,-16],[-4,-12],[0,-17],[4,-12],[8,-16],[8,-9]]);
+        c.fillStyle="#fff";c.beginPath();c.arc(0,1,8.4,0,TAU);c.fill();
+        for(const sg of[-1,1]){skD(c,"#111",sg*3.2,-.4,1.5);}
+        skL(c,"#111",1.1,[[-3,4],[0,5.4],[3,4]]);
+        if(inv){c.strokeStyle="rgba(255,255,255,.85)";c.lineWidth=2;c.beginPath();c.arc(0,0,18.5,0,TAU);c.stroke();}
+        return;
+    }
+    if(ty==="shockwave"){
+        const f=ball.skf||{cd:5,pulse:0};
+        const charge=1-Math.max(0,f.cd)/SHOCK_CD;
+        c.fillStyle="#5a2a0a";c.beginPath();c.arc(0,0,15.5,0,TAU);c.fill();
+        for(let i=0;i<3;i++){
+            const ph=((t*.9+i/3)%1);
+            c.strokeStyle="rgba(255,176,64,"+(1-ph)*.7+")";c.lineWidth=1.6;
+            c.beginPath();c.arc(0,0,3+ph*12.5,0,TAU);c.stroke();
+        }
+        c.fillStyle="#ffb040";c.beginPath();c.arc(0,0,6+f.pulse*10,0,TAU);c.fill();
+        for(const sg of[-1,1]){skD(c,"#fff",sg*3.3,-1.2,2.1);skD(c,"#111",sg*3.3+.3,-.9,1.1);}
+        skL(c,"#3a1a05",1.6,[[-6.4,-4.6],[-1.6,-3.2]]);skL(c,"#3a1a05",1.6,[[6.4,-4.6],[1.6,-3.2]]);
+        skL(c,"#3a1a05",1.2,[[-3,4],[0,3.2],[3,4]]);
+        c.strokeStyle="#ffe0a0";c.lineWidth=1.6;c.lineCap="round";
+        c.beginPath();c.arc(0,0,18,-Math.PI/2,-Math.PI/2+TAU*charge);c.stroke();
+        return;
+    }
+    if(ty==="mirror"){
+        const f=ball.mrf||{up:0};
+        const g=c.createLinearGradient(-12,-12,12,12);
+        g.addColorStop(0,"#ffffff");g.addColorStop(.45,"#b8c8d8");g.addColorStop(1,"#6a7a8e");
+        c.fillStyle=g;c.beginPath();c.arc(0,0,15.5,0,TAU);c.fill();
+        skL(c,"rgba(255,255,255,.9)",2,[[-9,-3],[-3,-9]]);
+        skL(c,"rgba(255,255,255,.6)",1.2,[[-10,2],[2,-10]]);
+        for(const sg of[-1,1]){skD(c,"#fff",sg*3.6,-.6,2.4);skD(c,"#223",sg*3.6+.3,-.3,1.3);}
+        skL(c,"#4a5a6e",1.1,[[-3,5],[0,6.2],[3,5]]);
+        c.strokeStyle="#4a5a6e";c.lineWidth=1.4;c.beginPath();c.arc(0,0,15.5,0,TAU);c.stroke();
+        if(f.up>0){
+            c.strokeStyle="rgba(150,230,255,"+(.6+.3*Math.sin(t*14))+")";c.lineWidth=2.4;
+            c.beginPath();c.arc(0,0,19,0,TAU);c.stroke();
+            skL(c,"rgba(255,255,255,.8)",1.4,[[-14,-8],[-8,-14]]);
+        }
+        return;
+    }
+    if(ty==="hourglass"){
+        const f=ball.hgf||{sand:0,flip:0};
+        c.fillStyle="#7a5a2a";c.beginPath();c.arc(0,0,15.5,0,TAU);c.fill();
+        c.fillStyle="#e8d29a";c.beginPath();c.arc(0,0,12.6,0,TAU);c.fill();
+        c.save();
+        if(f.flip>0)c.rotate(Math.PI*(1-f.flip/.6));
+        const s=Math.min(1,f.sand);
+        c.fillStyle="#d89a2a";
+        c.beginPath();c.moveTo(-6,-9);c.lineTo(6,-9);c.lineTo(0,-.5);c.closePath();
+        c.save();c.clip();c.fillRect(-7,-9+9*s,14,9*(1-s)+1);c.restore();
+        c.beginPath();c.moveTo(-6,9);c.lineTo(6,9);c.lineTo(0,.5);c.closePath();
+        c.save();c.clip();c.fillRect(-7,9-9*s,14,9*s+1);c.restore();
+        c.fillRect(-.4,-.6,.8,1.4);
+        c.strokeStyle="#3a2a10";c.lineWidth=1.3;c.lineJoin="round";
+        c.beginPath();c.moveTo(-7,-10);c.lineTo(7,-10);c.lineTo(.8,0);c.lineTo(7,10);c.lineTo(-7,10);c.lineTo(-.8,0);c.closePath();c.stroke();
+        c.restore();
+        return;
+    }
+}
+
 function updatePdBalls(ball,dt){
+    if(ball.type==="marble"||ball.type==="chess"||ball.type==="shockwave"||ball.type==="mirror"||ball.type==="hourglass"){updateNewBalls(ball,dt);return;}
     if(ball.type==="eyeball")
         updateEyeball(ball,dt);
     else if(ball.type==="cult")
@@ -28267,6 +28660,11 @@ function drawPdFxTop(){
 }
 function drawPdDesign(ball,r){
     const ty=ball.type;
+    if(ty==="marble"||ty==="chess"||ty==="shockwave"||ty==="mirror"||ty==="hourglass"){
+        if(gskId(ball))return;
+        ctx.save();ctx.scale(r/17,r/17);drawNewBallDesign(ctx,ball,performance.now()/1000);ctx.restore();
+        return;
+    }
     if(ty==="eyeball"||ty==="cult"){
         if(gskId(ball))return;
         ctx.save();ctx.scale(r/17,r/17);
@@ -34292,6 +34690,20 @@ function hermitLen(ball){
     return 24+Math.max(0,100-ball.hp)*.55;
 }
 
+/* the staff circles AROUND the hermit: it hangs at orbit distance and points along the circle */
+function hermitOrbit(ball){
+    return getRadius(ball)+9+Math.max(0,100-ball.hp)*.12;
+}
+function hermitHalf(ball){
+    return 10+hermitLen(ball)*.55;
+}
+function hermitSeg(ball){
+    const a=ball.hmAng||0,o=hermitOrbit(ball),h=hermitHalf(ball);
+    const cx=ball.x+Math.cos(a)*o,cy=ball.y+Math.sin(a)*o;
+    const tx=-Math.sin(a)*h,ty=Math.cos(a)*h;
+    return [cx-tx,cy-ty,cx+tx,cy+ty];
+}
+
 function hermitDmg(ball){
 
     return 3;
@@ -34308,12 +34720,11 @@ function updateHermit(ball,dt){
     if(ball.hmCd>0)
         return;
 
-    const len=getRadius(ball)+hermitLen(ball);
-    const dx=Math.cos(ball.hmAng)*len,dy=Math.sin(ball.hmAng)*len;
+    const sg=hermitSeg(ball);
 
     for(const e of getEnemies(ball)){
 
-        if(segDist(e.x,e.y,ball.x-dx,ball.y-dy,ball.x+dx,ball.y+dy)<=getRadius(e)+2){
+        if(segDist(e.x,e.y,sg[0],sg[1],sg[2],sg[3])<=getRadius(e)+2){
 
             damageBall(e,hermitDmg(ball),"STAFF");
             ball.hmCd=.45;
@@ -35160,18 +35571,19 @@ function drawTarotDesign(ball,r){
         c.strokeStyle="#8a6a2a";c.lineWidth=.8;c.strokeRect(-14.4,12,4.8,5);
         D("rgba(255,233,138,.35)",-12,14.5,6);
 
-        /* the staff: spins level through the ball and grows as health falls */
+        /* the staff circles around the ball, held out at orbit distance */
         c.save();
         c.rotate(ball.hmAng||0);
 
         const k=r/17;
-        const len=(r+hermitLen(ball))/k;
+        const orb=hermitOrbit(ball)/k, hf=hermitHalf(ball)/k;
         const glow=ball.hmFx>0?1:0;
 
-        L("#a9743a",2.6,[[-len,0],[len,0]]);
-        if(glow)L("rgba(200,208,255,.8)",1.4,[[-len,0],[len,0]]);
-        D("#c8d0ff",len,0,3);
-        D("#c8d0ff",-len,0,3);
+        L("rgba(200,208,255,.18)",1,[[0,0],[orb*.6,0]]);
+        L("#a9743a",2.6,[[orb,-hf],[orb,hf]]);
+        if(glow)L("rgba(200,208,255,.8)",1.4,[[orb,-hf],[orb,hf]]);
+        D("#c8d0ff",orb,hf,3);
+        D("#c8d0ff",orb,-hf,3);
         c.restore();
     }
 
@@ -36366,6 +36778,8 @@ function drawNewFxUnder(){
     drawC4();
     drawBumpers();
     drawDJ();
+    drawShockWaves();
+    drawMarbles();
     drawBsodArena();
     drawPupFx();
     drawTarotFxUnder();
@@ -36481,6 +36895,9 @@ function update(dt){
 
     updateMapGimmicks(dt);
     updateDJNotes(dt);
+    updateMarbles(dt);
+    updateShockWaves(dt);
+    nbT+=dt;
     updateInvaders(dt);
     updateRockets(dt);
     updateMindsFx(dt);
@@ -36829,6 +37246,15 @@ function update(dt){
 
         if(winTeam && balls.some(b=>b.type==="ducky" && b.team===winTeam && b.hp>0 && !b.isMinion))
             unlockSecrets(["chicken"]);
+
+        if(winTeam){
+            const real=balls.filter(b=>!b.isMinion&&!b.isBoss);
+            const t1=real.filter(b=>b.team===1),t2=real.filter(b=>b.team===2);
+            if(t1.length&&t2.length&&real.every(b=>b.type===real[0].type))
+                unlockSecrets(["mirror"]);
+            if(nbT>=60)
+                unlockSecrets(["hourglass"]);
+        }
     }
 
     if(!teamAlive(1)){
@@ -38040,7 +38466,7 @@ astrologist:["Makes a star every 3 seconds. Three stars form a constellation, an
 zodiac:["Every 3 seconds it uses a random zodiac sign. Aries: a goat charges (4). Taurus: a drifting bull (4). Gemini: 2 henchmen with 5 health. Cancer: two pinchers close in (2 each). Leo: a tiger scratches for 3 seconds (2 each). Virgo: wheat that never misses (1). Libra: a Judgemental sum. Scorpio: a stinger tail (5). Sagittarius: 3 arrows (4 each). Capricorn: a homing sea goat (3). Aquarius: falling droplets (2 each). Pisces: two homing fish (2 each).","Twelve signs, one ball, no mercy.","Zodiac Ball is what an Astrologist becomes when the sky finally writes back. The stars he used to hang in the arena learned his name, and now each sign takes its turn to fight for him. Nobody knows which one will come next, not even him. He only knows that a goat, a bull, or a rain of water will arrive in three seconds, and that it will not be friendly."],
 hierophant:["Summons 2 followers (50 health, 3 damage each) and stands still while they fight, dodging everything aimed at him. When both fall he rises with 100 health and uses his cane to raise a trail of bone that hunts the nearest enemy and stops when it hits a wall. Touching the bone deals 3 damage.","He teaches until the lesson is over, then he collects.","The Hierophant has never lifted a finger in his own defence, because his followers do the lifting. But every teacher outlives his students eventually. When the last follower falls he stands up, plants his cane, and the floor answers with bones."],
 hanged:["Hangs from a rope and drops like a bungee to strike for 3 damage. It can only be hurt while the rope is down.","He sees the world upside down, and it is a better view.","Hanged Ball dangles patiently from the ceiling until the right moment, then lets the rope go and drops like a thought. While he is up there nothing can touch him. While he is down there, everything can, and he knows it."],
-hermit:["Fights with a spinning staff that sweeps level through his body. The staff grows longer as he loses health, and every hit deals 3 damage.","The Hierophant's disciple, and the only one who walked away.","Hermit Ball carries a lantern and a staff and not much else. The more he is hurt, the longer the staff grows, as if the road itself is lengthening to give him room. He learned patience from the Hierophant, and the Hierophant would be proud of how little patience he has left."],
+hermit:["Fights with a staff that circles around him like a satellite. The staff grows longer as he loses health, and every hit deals 3 damage.","The Hierophant's disciple, and the only one who walked away.","Hermit Ball carries a lantern and a staff and not much else. The more he is hurt, the longer the staff grows, as if the road itself is lengthening to give him room. He learned patience from the Hierophant, and the Hierophant would be proud of how little patience he has left."],
 sword:["Spins a sword around itself, slashing anything it touches for 4. The sword spins faster the more hurt it gets.","A swordsman who wandered into the arena by accident and still refuses to ask for directions.","Sword Ball took a wrong turn in the forest and followed the sound of clashing steel straight into the arena. Every fight since has been a puzzle solved with a blade, and the sword spins wilder as wounds pile up. He claims he meant to be here all along. The map in his pocket is upside down."],
 bow:["Fires an arrow at the nearest enemy for 4 damage. The more hurt it gets, the faster it shoots.","An archer with a temper. In his mind, the target is always the one at fault.","Bow Ball loves archery with his whole heart, and the target has never loved him back. Each miss feels personal, so he shoots faster the more he's hurt. The arena gave him endless targets that shoot back, which he considers the best news of his life."],
 spike:["Plants a spike in the wall every time it bounces off one. Enemies that touch spikes get stabbed.","A prankster who turned every wall in the house a little pointier. Nobody confessed.","Spike Ball began as a harmless household prankster, one sharp little trick at a time. Soon every wall bristled, and the family stopped asking who was responsible. The arena just gave the habit bigger walls. He still grins when someone leans on one."],
@@ -38718,6 +39144,16 @@ function closeFiles(){
 const BALL_CLASSES=["Close range","Ranged","Defensive","Trapper","Hit and run","Support"];
 const BALL_CLASS_COL={"Close range":"#a33a3a","Ranged":"#2f6fa8","Defensive":"#3a7a4a","Trapper":"#8a6a14","Hit and run":"#7a3a9a","Support":"#2a8a8a"};
 const BALL_CLASS_OF={"sword": ["Close range"], "bow": ["Ranged"], "spike": ["Trapper"], "vampire": ["Close range"], "freeze": ["Trapper"], "charge": ["Close range"], "dart": ["Ranged"], "grid": ["Trapper"], "electro": ["Close range"], "laser": ["Ranged"], "captain": ["Ranged"], "bomber": ["Trapper"], "magnet": ["Close range"], "summoner": ["Support"], "hook": ["Ranged"], "virus": ["Ranged"], "shield": ["Defensive"], "cell": ["Defensive"], "sleeping": ["Ranged"], "rush": ["Hit and run"], "dice": ["Ranged"], "particle": ["Trapper"], "pacioli": ["Close range"], "apple": ["Close range"], "dragon": ["Trapper"], "ducky": ["Ranged"], "batter": ["Ranged"], "puncher": ["Close range"], "cat": ["Close range"], "pizza": ["Support"], "bowling": ["Hit and run"], "beam": ["Ranged"], "volcanic": ["Trapper"], "corrosive": ["Trapper"], "gunslinger": ["Ranged"], "soul": ["Close range"], "portal": ["Hit and run"], "conductor": ["Trapper"], "preacher": ["Ranged"], "billiard": ["Hit and run"], "bouncy": ["Hit and run"], "shadow": ["Hit and run"], "gravity": ["Defensive"], "traverser": ["Support"], "planter": ["Trapper"], "ghoul": ["Close range"], "pinball": ["Trapper"], "ouroboros": ["Defensive"], "holy": ["Close range"], "onebullet": ["Ranged"], "necronomicon": ["Ranged"], "dj": ["Trapper"], "astrologist": ["Trapper"], "zodiac": ["Ranged"], "slime": ["Trapper"], "wordle": ["Ranged"], "cursor": ["Ranged"], "bluescreen": ["Defensive"], "lagger": ["Hit and run"], "message": ["Trapper"], "slasher": ["Close range"], "henchballs": ["Support"], "rocketeer": ["Ranged"], "arcade": ["Support"], "physics": ["Ranged"], "outlaw": ["Ranged"], "dog": ["Hit and run"], "chicken": ["Support"], "death": ["Close range"], "judge": ["Defensive"], "cicada": ["Trapper"], "pocketdim": ["Trapper"], "sun": ["Trapper"], "fool": ["Ranged"], "magician": ["Defensive"], "priestess": ["Ranged"], "empress": ["Close range"], "hanged": ["Hit and run"], "hermit": ["Close range"], "hierophant": ["Support"], "awakenedportal": ["Trapper"], "gangboss": ["Support"], "grandhive": ["Support"], "shackler": ["Trapper"], "divine": ["Defensive"], "lightspeed": ["Hit and run"], "elementbender": ["Ranged"], "hypereal": ["Support"], "perfectgravity": ["Defensive"], "puppeteer": ["Support"], "huntsball": ["Ranged"], "miner": ["Close range"], "gemstone": ["Trapper"], "eyeball": ["Close range"], "cult": ["Trapper"], "warrior": ["Hit and run"], "pluto": ["Close range"], "illuminati": ["Support"]};
+
+
+Object.assign(BALL_CLASS_OF,{marble:["Ranged"],chess:["Hit and run"],shockwave:["Close range"],mirror:["Defensive"],hourglass:["Support"]});
+Object.assign(BALL_FILES,{
+marble:["Every 4 seconds it throws 3 marbles toward the enemy. Marbles are slow, roll and bounce around the arena, and each one that hits deals 4 damage.","Three marbles, no plan, plenty of bounce.","Marble Ball never learned to aim, so it learned to throw in threes and let the walls do the thinking. The marbles are slow and lazy, which is exactly what makes them hard to get away from, because they keep rolling long after the throw. Each one that finally finds an enemy knocks 4 health out of them."],
+chess:["Every 4 seconds it rushes to the middle of the arena and makes a Knight, Bishop or Rook move. It is invulnerable while it does, and the enemy it captures takes 6 damage.","The only piece that never has to wait for its turn.","Chess Ball treats the arena as a board and itself as every piece at once. Every four seconds it slides to the center, picks a knight's hop, a bishop's diagonal or a rook's straight run, and lands wherever the enemy is standing. While it is moving nothing can touch it, and the piece it captures loses 6 health."],
+shockwave:["Every 5 seconds it sends out a shockwave. Each time it reaches an enemy there is a 60% chance it deals 10 damage and flings them across the arena. A flung ball shakes the screen and takes 2 damage on every wall it hits.","Sometimes the ground just says no.","Shockwave Ball stomps once every five seconds and hopes the arena listens. Six times out of ten it does: the enemy takes 10 damage and goes flying, and every wall they bounce off shakes the whole screen and costs them 2 more health. The other four times it is just a very loud ring."],
+mirror:["Every 7 seconds it raises its mirror for 2.5 seconds. While the mirror is up, every hit it would take is reflected onto the nearest enemy instead. It bashes enemies it touches for 3 damage.","Hit it as hard as you like. You are only hitting yourself.","Mirror Ball is polished enough to see its own reflection in an enemy's attack. For two and a half seconds out of every seven it holds up the glass, and whatever was meant for it goes right back to the nearest enemy."],
+hourglass:["Sand slowly fills it over 7 seconds. When it flips, the nearest enemy takes 3 damage and is slowed for 3 seconds. It bashes enemies it touches for 2 damage.","Always has exactly enough time.","Hourglass Ball never rushes. Its sand trickles for seven seconds, and when the last grain drops it turns itself over, hurting the nearest enemy and dragging them into slow motion for three. Then it starts counting again."]
+});
 
 function renderFiles(){
 
